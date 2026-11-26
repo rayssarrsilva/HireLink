@@ -1,5 +1,6 @@
 import { htmlToText } from '../core/html';
 import type { Details, Lead } from '../core/types';
+import { HttpError } from './http';
 import { between, type Collector, type CollectorContext } from './types';
 
 interface GupyJob {
@@ -62,17 +63,36 @@ export function gupyTextFromHtml(html: string): string {
   return htmlToText(html.replace(/^[\s\S]*?<body[^>]*>/i, '')).slice(0, 15_000);
 }
 
+/**
+ * Gupy changes the address its portal uses (portal.api.gupy.io and employability-portal.gupy.io stopped answering
+ * in Oct/2026). HireLinks tries the current one first and falls back to the older ones; same { data, pagination } shape.
+ */
+export const GUPY_ENDPOINTS = [
+  'https://portal.gupy.io/api/job-search/jobs',
+  'https://employability-portal.gupy.io/api/v1/jobs',
+  'https://portal.api.gupy.io/api/v1/jobs',
+];
+
 export const gupy: Collector = {
   id: 'gupy',
   label: 'Gupy',
   kind: 'api',
   async *run(ctx) {
+    let endpoints = GUPY_ENDPOINTS;
     for (const kw of ctx.plan.keywords) {
-      for (let offset = 0; offset < 100; offset += 10) {
-        const url = `https://portal.api.gupy.io/api/v1/jobs?jobName=${encodeURIComponent(kw)}&offset=${offset}&limit=10`;
-        const data = await ctx.http.json<{ data?: GupyJob[]; pagination?: { total?: number } }>(url, ctx.signal);
-        yield* parseGupy(data, ctx);
-        if (!data.data?.length || offset + 10 >= (data.pagination?.total ?? 0)) break;
+      for (let offset = 0; offset < 200; offset += 50) {
+        let data: { data?: GupyJob[]; pagination?: { total?: number } } | null = null;
+        for (const ep of endpoints) {
+          try {
+            data = await ctx.http.json(`${ep}?jobName=${encodeURIComponent(kw)}&offset=${offset}&limit=50`, ctx.signal);
+            endpoints = [ep]; // keeps the address that answered for the rest of the run
+            break;
+          } catch (e) {
+            if (!(e instanceof HttpError) || (e.status !== 404 && e.status !== 410) || ep === endpoints[endpoints.length - 1]) throw e;
+          }
+        }
+        yield* parseGupy(data ?? {}, ctx);
+        if (!data?.data?.length || offset + 50 >= (data.pagination?.total ?? 0)) break;
         await between(ctx, 1500, 3500);
       }
     }

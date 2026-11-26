@@ -31,7 +31,8 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  sources: SOURCE_IDS.filter((s) => s !== 'boards'),
+  // Glassdoor starts off: it often blocks automated browsers ("Humans only"). She can turn it on.
+  sources: SOURCE_IDS.filter((s) => s !== 'boards' && s !== 'glassdoor'),
   keywords: ['front-end', 'frontend developer', 'react', 'analista de QA', 'QA tester', 'teste de software'],
   remoteRegion: 'Brasil',
   boards: [],
@@ -86,11 +87,12 @@ export class Engine extends EventEmitter {
   private ctrl: AbortController | null = null;
   private ctx: BrowserContext | null = null;
   private opening: Promise<BrowserContext> | null = null;
-  private browserLock: Promise<unknown> = Promise.resolve();
   private exportTimer: NodeJS.Timeout | null = null;
   private changeTimer: NodeJS.Timeout | null = null;
   private seenKeys = new Set<string>();
   private seenTitles = new Set<string>();
+  private lanes = new Map<string, Promise<unknown>>();
+  private blocked = new Map<string, string>();
 
   constructor(
     private store: Store,
@@ -142,6 +144,8 @@ export class Engine extends EventEmitter {
     };
     this.seenKeys = s.skipPrevious ? this.store.historyKeys() : new Set();
     this.seenTitles = new Set();
+    this.lanes = new Map();
+    this.blocked = new Map();
     this.store.saveRun({ id: this.run.id, startedAt: this.run.startedAt, endedAt: null, found: 0, file: this.run.file });
 
     const ctrl = new AbortController();
@@ -190,10 +194,19 @@ export class Engine extends EventEmitter {
           .finally(() => (this.opening = null));
         return this.opening;
       },
-      withBrowser: <T>(fn: () => Promise<T>) => {
-        const next = this.browserLock.then(fn, fn);
-        this.browserLock = next.catch(() => undefined);
+      withBrowser: <T>(site: string, fn: () => Promise<T>) => {
+        const prev = this.lanes.get(site) ?? Promise.resolve();
+        const next = prev.then(fn, fn);
+        this.lanes.set(site, next.catch(() => undefined));
         return next;
+      },
+      isBlocked: (site) => this.blocked.has(site),
+      block: (site, reason) => {
+        if (this.blocked.has(site)) return;
+        this.blocked.set(site, reason);
+        this.log(reason);
+        this.emit('notice', reason);
+        this.changed();
       },
       waitForYou: async (message, done) => {
         run.needsYou = message;
@@ -202,7 +215,7 @@ export class Engine extends EventEmitter {
         this.changed();
         try {
           for (const p of this.ctx?.pages() ?? []) await p.bringToFront().catch(() => {});
-          const until = Date.now() + (this.o.waitForYouMs ?? 5 * 60_000);
+          const until = Date.now() + (this.o.waitForYouMs ?? 2 * 60_000);
           while (Date.now() < until) {
             await wait(3000 * Math.min(1, ctx.pace || 0.05), signal);
             if (await done().catch(() => false)) return true;
@@ -229,6 +242,10 @@ export class Engine extends EventEmitter {
             this.changed();
           }
           st.status = signal.aborted ? 'stopped' : 'done';
+          if (this.blocked.has(c.label)) {
+            st.status = 'stopped';
+            st.error = 'parado nesta coleta: o site pediu verificação de novo.';
+          }
         } catch (e) {
           if (signal.aborted || e instanceof Aborted || (e as Error).name === 'AbortError') st.status = 'stopped';
           else {

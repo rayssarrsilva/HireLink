@@ -48,17 +48,18 @@ export const indeed: Collector = {
       for (const [q, l] of queries) {
         for (let page = 0; page < 5; page++) {
           const url = ctx.http.rewrite(`${ORIGIN}/jobs?q=${encodeURIComponent(q)}&l=${encodeURIComponent(l)}&fromage=${indeedFromAge(ctx.plan.maxAgeDays)}&start=${page * 10}`);
-          const cards = await ctx.withBrowser(async () => {
+          const cards = await ctx.withBrowser('Indeed', async () => {
             const p = await tab('list');
             const ok = await openClear(p, url, ctx, 'Indeed', async () => (await p.locator('[data-jk]').count()) > 0 || (await p.locator('#mosaic-provider-jobcards, .jobsearch-NoResult-messageContainer').count()) > 0);
             return ok ? readIndeedCards(p) : null;
           });
           if (cards === null) {
-            ctx.log('Indeed: a verificação não foi resolvida; pulei esta busca.');
+            if (ctx.isBlocked('Indeed')) return;
             break;
           }
           if (!cards.length) break;
           for (const c of cards) {
+            if (ctx.isBlocked('Indeed')) return;
             const days = indeedAgeDays(c.age);
             yield {
               source: 'indeed',
@@ -69,7 +70,8 @@ export const indeed: Collector = {
               description: '',
               postedAt: days === null ? null : new Date(Date.now() - days * 86_400_000).toISOString(),
               loadDetails: () =>
-                ctx.withBrowser(async () => {
+                ctx.withBrowser('Indeed', async () => {
+                  if (ctx.isBlocked('Indeed')) return { description: '' };
                   await between(ctx, 4000, 10_000);
                   const p = await tab('detail');
                   const ok = await openClear(p, ctx.http.rewrite(`${ORIGIN}/viewjob?jk=${c.jk}`), ctx, 'Indeed', async () => (await p.locator('#jobDescriptionText').count()) > 0);

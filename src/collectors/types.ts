@@ -19,8 +19,11 @@ export interface CollectorContext {
   signal: AbortSignal;
   /** Opens (once) HireLinks' own browser profile. Only for sites that need a real browser. */
   browser: () => Promise<BrowserContext>;
-  /** Only one browser tab works at a time, at a human pace. */
-  withBrowser: <T>(fn: () => Promise<T>) => Promise<T>;
+  /** One tab at a time per site (a site waiting for the candidate never holds up another site). */
+  withBrowser: <T>(site: string, fn: () => Promise<T>) => Promise<T>;
+  /** Sites HireLinks stopped for this run because they kept asking "are you human?". */
+  isBlocked: (site: string) => boolean;
+  block: (site: string, reason: string) => void;
   /** Asks the candidate to act in the browser window (login wall, "are you human" check) and waits. */
   waitForYou: (message: string, done: () => Promise<boolean>) => Promise<boolean>;
   log: (msg: string) => void;

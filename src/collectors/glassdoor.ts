@@ -61,7 +61,7 @@ export const glassdoor: Collector = {
     try {
       for (const [q, l] of queries) {
         const url = ctx.http.rewrite(`${ORIGIN}/Job/jobs.htm?sc.keyword=${encodeURIComponent(q)}${l ? `&locKeyword=${encodeURIComponent(l)}` : ''}&fromAge=${age}`);
-        const cards = await ctx.withBrowser(async () => {
+        const cards = await ctx.withBrowser('Glassdoor', async () => {
           const p = await tab('list');
           const hasCards = async () => (await p.locator('[data-jobid], li[data-test="jobListing"], a[href*="jl="]').count()) > 0;
           if (!(await openClear(p, url, ctx, 'Glassdoor', hasCards))) return null;
@@ -84,10 +84,11 @@ export const glassdoor: Collector = {
           return all;
         });
         if (cards === null) {
-          ctx.log('Glassdoor: a verificação ou o login não foi resolvido; pulei esta busca.');
+          if (ctx.isBlocked('Glassdoor')) return;
           continue;
         }
         for (const c of cards) {
+          if (ctx.isBlocked('Glassdoor')) return;
           const link = glassdoorLink(c.href, c.id);
           if (!link) continue;
           const days = glassdoorAgeDays(c.age);
@@ -100,7 +101,8 @@ export const glassdoor: Collector = {
             description: '',
             postedAt: days === null ? null : new Date(Date.now() - days * 86_400_000).toISOString(),
             loadDetails: () =>
-              ctx.withBrowser(async () => {
+              ctx.withBrowser('Glassdoor', async () => {
+                if (ctx.isBlocked('Glassdoor')) return { description: '' };
                 await between(ctx, 4000, 10_000);
                 const p = await tab('detail');
                 const sels = ['[class*="JobDetails_jobDescription"]', '[data-test="jobDescriptionContent"]', '.jobDescriptionContent', '#JobDescriptionContainer'];

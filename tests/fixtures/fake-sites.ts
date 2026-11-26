@@ -12,7 +12,7 @@ export function route(path: string): { type: string; body: string } | null {
   const u = new URL(path, 'http://x');
 
   // ---- Gupy portal API + one job page ----
-  if (u.pathname === '/gupy/api/v1/jobs') {
+  if (u.pathname === '/gupy/api/job-search/jobs') {
     if (u.searchParams.get('offset') !== '0') return json({ data: [], pagination: { total: 3 } });
     return json({
       pagination: { total: 3 },
@@ -60,6 +60,10 @@ export function route(path: string): { type: string; body: string } | null {
   if (u.pathname === '/indeed/viewjob') {
     return html(`<html><head><title>Vaga</title></head><body><div id="jobDescriptionText">Trabalho remoto. ${REQS} Empresa com cultura de feedback e aprendizado contínuo para quem está começando na área.</div></body></html>`);
   }
+  // ---- Glassdoor that always answers "Humans only" (the check never clears) ----
+  if (u.pathname.startsWith('/gd/')) {
+    return html('<html><head><title>Just a moment...</title></head><body><h1>Humans only</h1><div id="challenge-form"></div></body></html>');
+  }
   return null;
 }
 
@@ -79,12 +83,13 @@ export async function startFakeSites(): Promise<{ base: string; overrides: Recor
   return {
     base,
     overrides: {
-      'https://portal.api.gupy.io': `${base}/gupy`,
+      'https://portal.gupy.io': `${base}/gupy`,
       'https://beta.gupy.io': `${base}/beta`,
       'https://acme.gupy.io': `${base}/acme`,
       'https://www.linkedin.com': `${base}/li`,
       'https://remotive.com': `${base}/remotive`,
       'https://br.indeed.com': `${base}/indeed`,
+      'https://www.glassdoor.com.br': `${base}/gd`,
     },
     close: () => new Promise((ok) => server.close(() => ok())),
   };

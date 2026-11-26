@@ -12,18 +12,41 @@ export async function isLoginWall(page: Page): Promise<boolean> {
   return (await page.locator('[data-test="authModal"], form[action*="login" i] input[type="password"], #LoginModal').count().catch(() => 0)) > 0;
 }
 
+/** Checks per site in this run. */
+const checks = new WeakMap<CollectorContext, Map<string, number>>();
+
 /**
- * Goes to a URL and, when the site shows a check or a login wall, asks the candidate to handle it
- * in the browser window, waiting until the page is usable again. Returns false if she did not.
+ * Goes to a URL and, when the site shows a check or a login wall, asks the candidate to handle it.
+ * Careful by design: the first check waits for her; if the same site asks again (or the check is not cleared),
+ * HireLinks stops that site for the rest of the run instead of insisting. Returns false when the page is not usable.
  */
 export async function openClear(page: Page, url: string, ctx: CollectorContext, site: string, ready: () => Promise<boolean>): Promise<boolean> {
+  if (ctx.isBlocked(site)) return false;
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await page.waitForTimeout(Math.round(1500 * ctx.pace) + 200);
   if (await isChallenge(page)) {
-    return ctx.waitForYou(`${site} pediu uma verificação "você é humano?". Resolva na janela do navegador; depois disso a coleta continua sozinha.`, async () => !(await isChallenge(page)) && (await ready()));
+    const map = checks.get(ctx) ?? new Map<string, number>();
+    checks.set(ctx, map);
+    const n = (map.get(site) ?? 0) + 1;
+    map.set(site, n);
+    if (n > 1) {
+      ctx.block(site, `${site} pediu a verificação "você é humano?" de novo. Parei o ${site} nesta coleta para não arriscar; os outros sites continuam.`);
+      return false;
+    }
+    const ok = await ctx.waitForYou(
+      `${site} pediu uma verificação "você é humano?". Marque a caixa na janela do navegador (só desta vez). Se aparecer de novo, eu paro o ${site} e sigo com os outros sites.`,
+      async () => !(await isChallenge(page)) && (await ready()),
+    );
+    if (!ok) ctx.block(site, `A verificação do ${site} não liberou. Parei o ${site} nesta coleta; os outros sites continuam.`);
+    return ok;
   }
   if (!(await ready()) && (await isLoginWall(page))) {
-    return ctx.waitForYou(`${site} pediu login. Entre na sua conta na janela do navegador (só uma vez); depois disso a coleta continua sozinha.`, ready);
+    const ok = await ctx.waitForYou(
+      `${site} pediu login. Entre com e-mail e senha na janela do navegador (o botão "Continuar com Google" não funciona nessa janela). Depois disso a coleta continua sozinha.`,
+      ready,
+    );
+    if (!ok) ctx.block(site, `${site} continuou pedindo login. Parei o ${site} nesta coleta; os outros sites continuam.`);
+    return ok;
   }
   return true;
 }

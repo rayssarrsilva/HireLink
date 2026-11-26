@@ -146,3 +146,24 @@ describe('browser sites', () => {
     expect(indeedFromAge(2)).toBe(3);
   });
 });
+
+describe('Gupy address fallback', () => {
+  it('tries the next known address when one answers 404, then keeps the one that works', async () => {
+    const { gupy, GUPY_ENDPOINTS } = await import('../../src/collectors/gupy');
+    const { Http, HttpError } = await import('../../src/collectors/http');
+    const asked: string[] = [];
+    class FakeHttp extends Http {
+      override async json<T>(url: string): Promise<T> {
+        asked.push(url);
+        if (url.startsWith(GUPY_ENDPOINTS[0]!)) throw new HttpError(url, 404);
+        return { data: [{ id: 1, name: 'Dev Front', jobUrl: 'https://acme.gupy.io/jobs/1', description: 'x'.repeat(400) }], pagination: { total: 1 } } as T;
+      }
+    }
+    const ctx = { plan: { keywords: ['react', 'qa'], remoteRegion: '', cities: [], maxAgeDays: 14, boards: [] }, http: new FakeHttp(), signal: new AbortController().signal, pace: 0, log: () => {} } as never;
+    const out = [];
+    for await (const l of gupy.run(ctx)) out.push(l);
+    expect(out).toHaveLength(2);
+    expect(asked.filter((u) => u.startsWith(GUPY_ENDPOINTS[0]!))).toHaveLength(1);
+    expect(asked.filter((u) => u.startsWith(GUPY_ENDPOINTS[1]!))).toHaveLength(2);
+  });
+});

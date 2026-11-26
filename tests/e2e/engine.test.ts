@@ -28,7 +28,7 @@ function engine(store: Store) {
     pace: 0,
     headless: true,
     executablePath: process.env.CHROME_PATH ?? (existsSync('/usr/bin/google-chrome') ? '/usr/bin/google-chrome' : undefined),
-    waitForYouMs: 15_000,
+    waitForYouMs: 4_000,
     httpOverrides: sites.overrides,
   });
 }
@@ -89,6 +89,20 @@ describe('HireLinks engine (local fake sites)', () => {
     for (const l of links) expect(detectSite(l).warning).toBeUndefined();
     const csv = readFileSync(join(dir, 'exports', `${run.file}.csv`), 'utf8');
     expect(csv.split('\r\n').filter(Boolean)).toHaveLength(6);
+  });
+
+  it('stops a site that keeps asking "are you human?" without holding up the others', async () => {
+    const fresh = new Store(':memory:');
+    fresh.setJson('settings', { ...settings, sources: ['glassdoor', 'remotive'] });
+    fresh.setJson('profile', store.getJson('profile', {}));
+    const e = engine(fresh);
+    e.start();
+    await finished(e);
+    const run = e.run!;
+    expect(run.sources.glassdoor).toMatchObject({ status: 'stopped' });
+    expect(run.sources.remotive).toMatchObject({ status: 'done', kept: 1 });
+    expect(run.log.some((l) => l.msg.includes('Parei o Glassdoor nesta coleta'))).toBe(true);
+    expect(run.needsYou).toBeNull();
   });
 
   it('a second run never repeats links already delivered', async () => {
